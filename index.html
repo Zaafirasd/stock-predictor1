@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Stock Predictor</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js for plotting -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        /* A little custom style for the loader */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6; /* Blue color */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-4xl mx-auto p-6">
+        <div class="bg-white rounded-2xl shadow-xl p-8">
+            
+            <!-- Header -->
+            <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">Stock Price Predictor</h1>
+
+            <!-- Input Area -->
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+                <input type="text" id="tickerInput" placeholder="e.g., AAPL" class="w-full sm:w-64 text-center text-lg px-6 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
+                <button id="predictButton" class="w-full sm:w-auto bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 transition duration-300">
+                    Analyze & Predict
+                </button>
+            </div>
+
+            <!-- Result Area -->
+            <div id="resultArea" class="hidden">
+                <div id="recommendation" class="text-center text-2xl font-bold p-4 rounded-lg mb-6"></div>
+                <div class="bg-gray-50 p-4 rounded-lg shadow-inner">
+                    <canvas id="stockChart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Loading and Message Area -->
+            <div id="messageArea" class="text-center py-10">
+                 <div id="loader" class="loader mx-auto hidden"></div>
+                 <p id="messageText" class="text-gray-500 text-lg mt-4">Enter a stock ticker to begin.</p>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- All the JavaScript logic remains the same ---
+        const tickerInput = document.getElementById('tickerInput');
+        const predictButton = document.getElementById('predictButton');
+        const resultArea = document.getElementById('resultArea');
+        const recommendationEl = document.getElementById('recommendation');
+        const messageArea = document.getElementById('messageArea');
+        const loader = document.getElementById('loader');
+        const messageText = document.getElementById('messageText');
+        const canvas = document.getElementById('stockChart');
+        let chartInstance = null;
+
+        predictButton.addEventListener('click', runPrediction);
+        tickerInput.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') {
+                runPrediction();
+            }
+        });
+
+        async function runPrediction() {
+            const ticker = tickerInput.value.toUpperCase().trim();
+            if (!ticker) {
+                showMessage('Please enter a stock ticker.', 'error');
+                return;
+            }
+
+            // UI Reset and Loading State
+            showLoading(true);
+            resultArea.classList.add('hidden');
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            try {
+                // Call the Python Back-End Function
+                const response = await fetch(`/.netlify/functions/predict?ticker=${ticker}`);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Server error: ${response.status}`);
+                }
+                
+                const data = await response.json();
+
+                // Determine Recommendation
+                let recColor;
+                if (data.recommendation === "BUY") {
+                    recColor = 'bg-green-100 text-green-800';
+                } else {
+                    recColor = 'bg-red-100 text-red-800';
+                }
+
+                recommendationEl.textContent = `Recommendation: ${data.recommendation}`;
+                recommendationEl.className = `text-center text-2xl font-bold p-4 rounded-lg mb-6 ${recColor}`;
+
+                // Plot Data from Python Backend
+                plotData(data.historical_data, data.future_predictions, ticker);
+                
+                resultArea.classList.remove('hidden');
+                showLoading(false);
+
+            } catch (error) {
+                console.error("Prediction Error:", error);
+                showMessage(error.message, 'error');
+                showLoading(false);
+            }
+        }
+
+        function plotData(historical, future, ticker) {
+            const ctx = canvas.getContext('2d');
+            
+            const historicalLabels = historical.dates;
+            const historicalPrices = historical.prices;
+
+            const futureLabels = future.dates;
+            const futurePrices = future.prices;
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [...historicalLabels, ...futureLabels],
+                    datasets: [{
+                        label: 'Historical Price',
+                        data: historicalPrices,
+                        borderColor: 'royalblue',
+                        tension: 0.1,
+                        pointRadius: 0
+                    }, {
+                        label: 'Predicted Trend',
+                        data: new Array(historicalPrices.length - 1).fill(null).concat([historicalPrices[historicalPrices.length - 1], ...futurePrices]),
+                        borderColor: 'darkorange',
+                        borderDash: [5, 5],
+                        tension: 0.1,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: { display: true, text: `Stock Price Trend for ${ticker}`, font: { size: 16 } },
+                        legend: { position: 'top' },
+                    },
+                    scales: {
+                        x: { title: { display: true, text: 'Date' } },
+                        y: { title: { display: true, text: 'Stock Price (USD)' } }
+                    }
+                }
+            });
+        }
+
+        function showLoading(isLoading) {
+            if (isLoading) {
+                loader.classList.remove('hidden');
+                messageText.textContent = 'Contacting Python back-end...';
+                messageArea.classList.remove('hidden');
+                predictButton.disabled = true;
+                predictButton.classList.add('opacity-50', 'cursor-not-allowed');
+            } else {
+                loader.classList.add('hidden');
+                messageArea.classList.add('hidden');
+                predictButton.disabled = false;
+                predictButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+        
+        function showMessage(msg, type = 'info') {
+            messageArea.classList.remove('hidden');
+            messageText.textContent = type === 'error' ? `Error: ${msg}` : msg;
+            messageText.style.color = type === 'error' ? '#dc2626' : '#6b7280';
+        }
+    </script>
+</body>
+</html>
+
